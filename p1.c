@@ -6,10 +6,9 @@
 
 int main()
 {
-
-    char b[32];
-    char *buffer = b;
+    char *buffer;
     size_t len = 32;
+    buffer = (char *)malloc(len * sizeof(char));
     ssize_t characters;
     char *token;
     const char space[2] = " ";
@@ -19,27 +18,24 @@ int main()
     {
         characters = getline(&buffer, &len, stdin);
         char *args[100];
+        char *newline = strchr(buffer, '\n');
+        if (newline)
+            *newline = 0;
         token = strtok(buffer, space);
         i = 0;
+        args[i] = token;
         while (token != NULL)
         {
-            args[i] = token;
-            /* printf("%s\n", args[i]); */
+            i++;
             token = strtok(NULL, space);
-            //i++;
+            args[i] = token;
         }
 
-        args[i + 1] = NULL;
+        //args[i + 1] = NULL;
 
         int id = fork();
         if (id == 0)
         {
-            /* printf("%d", i);
-            for (int j = 0; j < 5; j++)
-            {
-                printf("%s", args[j]);
-            } */
-            /* execv(buffer, args); */
             execv(buffer, args);
         }
         else
