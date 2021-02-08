@@ -26,6 +26,7 @@ void shellBatch(char *file)
     ssize_t characters;
     char *token;
     const char space[2] = " ";
+    const char redirectSymbol[2] = ">";
     int i;
     FILE *fp;
     fp = fopen(file, "r");
@@ -34,6 +35,8 @@ void shellBatch(char *file)
         char error_message[41] = "An error has occurred w opening the file\n";
         write(STDERR_FILENO, error_message, strlen(error_message));
     }
+    char *tokenForRedirect;
+    char *redirectFile = "";
     characters = getline(&buffer, &len, fp);
     while (characters >= 0)
     {
@@ -43,6 +46,16 @@ void shellBatch(char *file)
             char *newline = strchr(buffer, '\n');
             if (newline)
                 *newline = 0;
+            tokenForRedirect = strtok(buffer, redirectSymbol);
+            while (tokenForRedirect != NULL)
+            {
+                tokenForRedirect = strtok(NULL, redirectSymbol);
+                if (tokenForRedirect)
+                {
+                    tokenForRedirect = strtok(tokenForRedirect, space);
+                    redirectFile = tokenForRedirect;
+                }
+            }
             token = strtok(buffer, space);
             args[i] = token;
             i = 1;
@@ -73,6 +86,13 @@ void shellBatch(char *file)
                 int id = fork();
                 if (id == 0)
                 {
+                    if (redirectFile[0] != '\0')
+                    {
+                        int fd = open(redirectFile, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+                        dup2(fd, 1);
+                        dup2(fd, 2);
+                        close(fd);
+                    }
                     if (execv(buffer, args) != 0)
                     {
                         char error_message[35] = "An error has occurred execv error\n";
@@ -82,6 +102,7 @@ void shellBatch(char *file)
                 else
                 {
                     wait(NULL);
+                    redirectFile = "";
                 }
             }
         }
@@ -98,16 +119,28 @@ void shellInteractive()
     ssize_t characters;
     char *token;
     const char space[2] = " ";
+    const char redirectSymbol[2] = ">";
     int i;
-
+    char *tokenForRedirect;
+    char *redirectFile = "";
+    printf("dash> ");
     while (1)
     {
-        printf("dash> ");
         characters = getline(&buffer, &len, stdin);
         char *args[100];
         char *newline = strchr(buffer, '\n');
         if (newline)
             *newline = 0;
+        tokenForRedirect = strtok(buffer, redirectSymbol);
+        while (tokenForRedirect != NULL)
+        {
+            tokenForRedirect = strtok(NULL, redirectSymbol);
+            if (tokenForRedirect)
+            {
+                tokenForRedirect = strtok(tokenForRedirect, space);
+                redirectFile = tokenForRedirect;
+            }
+        }
         token = strtok(buffer, space);
         i = 0;
         args[i] = token;
@@ -138,15 +171,25 @@ void shellInteractive()
             int id = fork();
             if (id == 0)
             {
+                if (redirectFile[0] != '\0')
+                {
+                    int fd = open(redirectFile, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+                    dup2(fd, 1);
+                    dup2(fd, 2);
+                    close(fd);
+                }
                 if (execv(buffer, args) != 0)
                 {
                     char error_message[30] = "An error has occurred execv\n";
                     write(STDERR_FILENO, error_message, strlen(error_message));
+                    return;
                 }
             }
             else
             {
                 wait(NULL);
+                redirectFile = "";
+                printf("dash> ");
             }
         }
     }
