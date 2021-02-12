@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <string.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 void exitShell()
 {
@@ -20,6 +22,7 @@ void changeDirectory(char *dir)
 
 const char space[2] = " ";
 const char redirectSymbol[2] = ">";
+const char parallelSymbol[2] = "&";
 
 void removeNewLine(char *buffer)
 {
@@ -28,10 +31,25 @@ void removeNewLine(char *buffer)
         *newline = 0;
 }
 
+int parseForParallel(char *buffer, char *args[])
+{
+    char *tokenForParallel;
+    tokenForParallel = strtok(buffer, parallelSymbol);
+    int i = 0;
+    args[i] = tokenForParallel;
+    while (tokenForParallel != NULL)
+    {
+        i++;
+        tokenForParallel = strtok(NULL, parallelSymbol);
+        args[i] = tokenForParallel;
+    }
+    return i;
+}
+
 char *parseForRedirect(char *buffer)
 {
     char *tokenForRedirect;
-    char *redirectFile;
+    char *redirectFile = (char *)malloc(strlen(buffer) * sizeof(char));
     tokenForRedirect = strtok(buffer, redirectSymbol);
     while (tokenForRedirect != NULL)
     {
@@ -42,6 +60,8 @@ char *parseForRedirect(char *buffer)
             redirectFile = tokenForRedirect;
         }
     }
+    /* if (redirectFile[0] == '\0')
+        return NULL; */
     return redirectFile;
 }
 
@@ -59,18 +79,16 @@ void parseForSpace(char *buffer, char *args[])
     }
 }
 
-void errorMessage()
-{
-    char error_message[30] = "An error has occurred\n";
-    write(STDERR_FILENO, error_message, strlen(error_message));
-}
-
 void shellBatch(char *file)
 {
     char *buffer;
-    size_t len = 32;
+    size_t len = 200;
     buffer = (char *)malloc(len * sizeof(char));
+    char *str = (char *)malloc(len * sizeof(char));
     ssize_t characters;
+    char *paths[200];
+    paths[0] = "/bin";
+    int pathCounter = 1;
     FILE *fp;
     fp = fopen(file, "r");
     if (!fp)
@@ -83,18 +101,128 @@ void shellBatch(char *file)
     {
         if (buffer[0] != '\n')
         {
-            char *args[100];
+            char *commands[100];
+            int end = parseForParallel(buffer, commands);
+            int i;
+            for (i = 0; i < end; i++)
+            {
+                char *args[100];
+                char *redirectFile;
+                removeNewLine(commands[i]);
+                redirectFile = parseForRedirect(commands[i]);
+                parseForSpace(commands[i], args);
+                if (strcmp(args[0], "exit") == 0)
+                {
+                    free(buffer);
+                    buffer = NULL;
+                    /*free(str);
+                    str = NULL; */
+                    exitShell();
+                }
+                else if (strcmp(args[0], "cd") == 0)
+                {
+                    if (args[1] && !args[2])
+                        changeDirectory(args[1]);
+                    else
+                    {
+                        char error_message[35] = "An error has occurred w cd args\n";
+                        write(STDERR_FILENO, error_message, strlen(error_message));
+                    }
+                }
+                else if (strcmp(args[0], "path") == 0)
+                {
+                    int k = 1;
+                    pathCounter = 0;
+                    while (args[k] != NULL)
+                    {
+                        paths[pathCounter] = strdup(args[k]);
+                        pathCounter++;
+                        k++;
+                    }
+                }
+                else
+                {
+                    int j = 0;
+                    while (paths[j] != NULL)
+                    {
+                        strcpy(str, paths[j]);
+                        strcat(str, "/");
+                        strcat(str, args[0]);
+                        if (access(str, X_OK) == 0)
+                        {
+                            args[0] = str;
+                            break;
+                        }
+                        j++;
+                    }
+                    int id = fork();
+                    if (id == 0)
+                    {
+                        if (redirectFile[0] != '\0')
+                        {
+                            int fd = open(redirectFile, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+                            dup2(fd, 1);
+                            dup2(fd, 2);
+                            close(fd);
+                        }
+                        if (execv(args[0], args) != 0)
+                        {
+                            char error_message[35] = "An error has occurred execv error\n";
+                            write(STDERR_FILENO, error_message, strlen(error_message));
+                            exit(1);
+                        }
+                        exit(0);
+                    }
+                }
+            }
+            while (end > 0)
+            {
+                wait(NULL);
+                end--;
+            }
+        }
+        characters = getline(&buffer, &len, fp);
+    }
+    fclose(fp);
+    free(buffer);
+    buffer = NULL;
+    free(str);
+    str = NULL;
+}
+
+void shellInteractive()
+{
+    char *buffer;
+    size_t len = 200;
+    buffer = (char *)malloc(len * sizeof(char));
+    char *str = (char *)malloc(len * sizeof(char));
+    ssize_t characters;
+    char *paths[200];
+    paths[0] = "/bin";
+    int pathCounter = 1;
+    printf("dash> ");
+    while (1)
+    {
+        characters = getline(&buffer, &len, stdin);
+        char *commands[characters];
+        int end = parseForParallel(buffer, commands);
+        int i;
+        for (i = 0; i < end; i++)
+        {
             char *redirectFile;
-            removeNewLine(buffer);
-            redirectFile = parseForRedirect(buffer);
-            parseForSpace(buffer, args);
-            if (strcmp(buffer, "exit") == 0)
+            removeNewLine(commands[i]);
+            redirectFile = parseForRedirect(commands[i]);
+            char *args[strlen(commands[i])];
+            parseForSpace(commands[i], args);
+            if (strcmp(args[0], "exit") == 0)
             {
                 free(buffer);
                 buffer = NULL;
+                free(str);
+                str = NULL;
                 exitShell();
             }
-            else if (strcmp(buffer, "cd") == 0)
+            else if (strcmp(args[0], "cd") == 0)
             {
                 if (args[1] && !args[2])
                     changeDirectory(args[1]);
@@ -104,8 +232,32 @@ void shellBatch(char *file)
                     write(STDERR_FILENO, error_message, strlen(error_message));
                 }
             }
+            else if (strcmp(args[0], "path") == 0)
+            {
+                int k = 1;
+                pathCounter = 0;
+                while (args[k] != NULL)
+                {
+                    paths[pathCounter] = strdup(args[k]);
+                    pathCounter++;
+                    k++;
+                }
+            }
             else
             {
+                int j = 0;
+                while (paths[j] != NULL)
+                {
+                    strcpy(str, paths[j]);
+                    strcat(str, "/");
+                    strcat(str, args[0]);
+                    if (access(str, X_OK) == 0)
+                    {
+                        args[0] = str;
+                        break;
+                    }
+                    j++;
+                }
                 int id = fork();
                 if (id == 0)
                 {
@@ -116,86 +268,28 @@ void shellBatch(char *file)
                         dup2(fd, 2);
                         close(fd);
                     }
-                    if (execv(buffer, args) != 0)
+
+                    if (execv(args[0], args) != 0)
                     {
-                        char error_message[35] = "An error has occurred execv error\n";
+                        char error_message[30] = "An error has occurred execv\n";
                         write(STDERR_FILENO, error_message, strlen(error_message));
-                        //return;
+                        exit(1);
                     }
-                }
-                else
-                {
-                    wait(NULL);
+                    exit(0);
                 }
             }
+            /* free(buffer);
+            buffer = NULL; */
         }
-        characters = getline(&buffer, &len, fp);
+        while (end > 0)
+        {
+            wait(NULL);
+            end--;
+        }
+        printf("dash> ");
     }
-    fclose(fp);
     free(buffer);
     buffer = NULL;
-}
-
-void shellInteractive()
-{
-    char *buffer;
-    size_t len = 32;
-    buffer = (char *)malloc(len * sizeof(char));
-    ssize_t characters;
-    printf("dash> ");
-    while (1)
-    {
-        characters = getline(&buffer, &len, stdin);
-        char *args[100];
-        char *redirectFile;
-        removeNewLine(buffer);
-        redirectFile = parseForRedirect(buffer);
-        parseForSpace(buffer, args);
-        if (strcmp(buffer, "exit") == 0)
-        {
-            free(buffer);
-            buffer = NULL;
-            exitShell();
-        }
-        else if (strcmp(buffer, "cd") == 0)
-        {
-            if (args[1] && !args[2])
-                changeDirectory(args[1]);
-            else
-            {
-                char error_message[35] = "An error has occurred w cd args\n";
-                write(STDERR_FILENO, error_message, strlen(error_message));
-            }
-            printf("dash> ");
-        }
-        else
-        {
-            int id = fork();
-            if (id == 0)
-            {
-                if (redirectFile[0] != '\0')
-                {
-                    int fd = open(redirectFile, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-                    dup2(fd, 1);
-                    dup2(fd, 2);
-                    close(fd);
-                }
-                if (execv(buffer, args) != 0)
-                {
-                    char error_message[30] = "An error has occurred execv\n";
-                    write(STDERR_FILENO, error_message, strlen(error_message));
-                    return;
-                }
-            }
-            else
-            {
-                wait(NULL);
-                printf("dash> ");
-            }
-        }
-        /* free(buffer);
-        buffer = NULL; */
-    }
 }
 
 int main(int argc, char *argv[])
