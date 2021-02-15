@@ -49,6 +49,8 @@ int setPath(char *paths[], char *args[], int pathCounter)
             k++;
         }
     }
+    if (pathCounter == -1)
+        return 0;
     return pathCounter;
 }
 
@@ -196,7 +198,7 @@ void shellBatch(char *file)
         {
             char *commands[characters]; //make size of commands array = size of buffer so enough memory is available
             removeNewLine(buffer);
-            int end = parseForParallel(buffer, commands);
+            int end = parseForParallel(buffer, commands); //how many commands to be executed
             //show an error if the buffer is only '&'
             if (end == 0)
             {
@@ -236,7 +238,7 @@ void shellBatch(char *file)
                 //if buffer is cd command
                 else if (strcmp(args[0], "cd") == 0)
                 {
-                    //check to make sure only one argument is provided or throw an error
+                    //check to make sure only one argument is provided or show an error
                     if (args[1] && !args[2])
                         changeDirectory(args[1]);
                     else
@@ -272,7 +274,13 @@ void shellBatch(char *file)
                     }
                     //create child process to execute command
                     int id = fork();
-                    if (id == 0)
+                    //if fork fails
+                    if (id < 0)
+                    {
+                        char error_message[30] = "An error has occurred\n";
+                        write(STDERR_FILENO, error_message, strlen(error_message));
+                    }
+                    else if (id == 0)
                     {
                         //check if redirect file exists
                         if (redirectFile[0] != '\0')
@@ -290,16 +298,17 @@ void shellBatch(char *file)
                             write(STDERR_FILENO, error_message, strlen(error_message));
                             exit(1);
                         }
-                        //exit(0);
                     }
                 }
             }
+            //wait for all child processes/parallel commands to finish executing
             while (end > 0)
             {
                 wait(NULL);
                 end--;
             }
         }
+        //get next line of file
         characters = getline(&buffer, &len, fp);
     }
     //close file, free buffer from memory, and free str from memory when EOF is reached
@@ -310,41 +319,49 @@ void shellBatch(char *file)
     str = NULL;
 }
 
+//interactive version of the shell
 void shellInteractive()
 {
+    //allocate memory for buffer (user input) and str (for setting a path when execv is called)
     char *buffer;
     size_t len = 200;
     buffer = (char *)malloc(len * sizeof(char));
     char *str = (char *)malloc(len * sizeof(char));
     ssize_t characters;
+    //paths is set with "/bin" initially
     char *paths[200];
     paths[0] = "/bin";
-    int pathCounter = 1;
+    int pathCounter = 1; //how many paths currently
     printf("dash> ");
     while (1)
     {
-        characters = getline(&buffer, &len, stdin);
-        if (buffer[0] != '\n')
+        characters = getline(&buffer, &len, stdin); //get user input
+        if (buffer[0] != '\n')                      //if input isn't an empty line
         {
-            char *commands[characters];
+            char *commands[characters]; //make size of commands array = size of buffer so enough memory is available
             removeNewLine(buffer);
-            int end = parseForParallel(buffer, commands);
+            int end = parseForParallel(buffer, commands); //how many commands to be executed
             int i;
+            //show an error if the buffer is only '&'
             if (end == 0)
             {
                 char error_message[30] = "An error has occurred\n";
                 write(STDERR_FILENO, error_message, strlen(error_message));
             }
+            //loop to run each parallel command without waiting for any of them to finish
             for (i = 0; i < end; i++)
             {
                 char *redirectFile;
                 redirectFile = parseForRedirect(commands[i]);
-                char *args[strlen(commands[i])];
+                char *args[strlen(commands[i])]; //make size of args array = length of command so enough memory is available
                 parseForSpace(commands[i], args);
+                //if buffer is empty
                 if (args[0][0] == '\0')
                     continue;
+                //if buffer is exit command
                 if (strcmp(args[0], "exit") == 0)
                 {
+                    //if an argument is give with exit, show error
                     if (args[1])
                     {
                         char error_message[30] = "An error has occurred\n";
@@ -352,6 +369,7 @@ void shellInteractive()
                     }
                     else
                     {
+                        //free buffer and str from memory when exit is called
                         free(buffer);
                         buffer = NULL;
                         free(str);
@@ -359,8 +377,10 @@ void shellInteractive()
                         exitShell();
                     }
                 }
+                //if buffer is cd command
                 else if (strcmp(args[0], "cd") == 0)
                 {
+                    //check to make sure only one argument is provided or show an error
                     if (args[1] && !args[2])
                         changeDirectory(args[1]);
                     else
@@ -369,48 +389,61 @@ void shellInteractive()
                         write(STDERR_FILENO, error_message, strlen(error_message));
                     }
                 }
+                //if buffer is path command
                 else if (strcmp(args[0], "path") == 0)
                 {
                     pathCounter = setPath(paths, args, pathCounter);
                 }
+                //if buffer is a system command
                 else
                 {
+                    //check through all paths if the command in buffer is part of that path
                     int j = 0;
                     while (paths[j] != NULL)
                     {
+                        //copy the path and the command with a '/' in between to str
                         strcpy(str, paths[j]);
                         strcat(str, "/");
                         strcat(str, args[0]);
+                        //check if string is a valid command
                         if (access(str, X_OK) == 0)
                         {
+                            //change the first argument to contain the path and break
                             args[0] = str;
                             break;
                         }
                         j++;
                     }
+                    //create child process to execute command
                     int id = fork();
-                    if (id == 0)
+                    //if fork fails
+                    if (id < 0)
                     {
+                        char error_message[30] = "An error has occurred\n";
+                        write(STDERR_FILENO, error_message, strlen(error_message));
+                    }
+                    else if (id == 0)
+                    {
+                        //check if redirect file exists
                         if (redirectFile[0] != '\0')
                         {
+                            //open/create/truncate the redirect file wih read/write
                             int fd = open(redirectFile, O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-                            dup2(fd, 1);
-                            dup2(fd, 2);
+                            dup2(fd, 1); //change output to the file
+                            dup2(fd, 2); //change stderror to the file
                             close(fd);
                         }
-
+                        //execute the command, if it fails, show an error and exit(1)
                         if (execv(args[0], args) != 0)
                         {
                             char error_message[30] = "An error has occurred\n";
                             write(STDERR_FILENO, error_message, strlen(error_message));
                             exit(1);
                         }
-                        exit(0);
                     }
                 }
-                /* free(buffer);
-                buffer = NULL; */
             }
+            //wait for all child processes/parallel commands to finish executing
             while (end > 0)
             {
                 wait(NULL);
@@ -423,16 +456,19 @@ void shellInteractive()
 
 int main(int argc, char *argv[])
 {
+    //if called 2 arguments, call batch version of shell with the file
     if (argc == 2)
     {
         shellBatch(argv[1]);
     }
+    //show an error if called with more than 2 arguments
     else if (argc > 2)
     {
         char error_message[30] = "An error has occurred\n";
         write(STDERR_FILENO, error_message, strlen(error_message));
         exit(1);
     }
+    //call interactive version of shell if only one argument
     else
     {
         shellInteractive();
